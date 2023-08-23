@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Add User</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body>
+    <h1>Add User</h1>
+
+    <table>
+        <tr>
+            <td>Name: </td>
+            <td><input type="text" placeholder="name" id="name" /></td>
+        </tr>
+        <tr>
+            <td>Surname: </td>
+            <td><input type="text" placeholder="surname" id="surname" /></td>
+        </tr>
+        <tr>
+            <td>Cell Phone Number: </td>
+            <td><input type="text" placeholder="cellNo" id="cellNo" /></td>
+        </tr>
+        <tr>
+            <td></td>
+            <td><input type="button" value="Submit" id="submitBtn" /></td>
+        </tr>
+    </table>
+
+    <!-- Link to the display user info page -->
+    <p id="displayLink" style="display: none;"><a href="display_user.html">Display User Info</a></p>
+
+    <script>
+        document.getElementById("submitBtn").addEventListener("click", function() {
+            const name = document.getElementById("name").value;
+            const surname = document.getElementById("surname").value;
+            const cellNo = document.getElementById("cellNo").value;
+
+            const userData = {
+                name: name,
+                surname: surname,
+                cellNo: cellNo
+            };
+
+            axios.post("http://127.0.0.1:5000/home", userData)
+                .then(response => {
+                    // Handle the response if needed
+                    console.log(response.data);
+
+                    // Show the link to the display user info page
+                    document.getElementById("displayLink").style.display = "block";
+                })
+                .catch(error => {
+                    // Handle errors if any
+                    console.error(error);
+                });
+        });
+    </script>
+</body>
+</html>
