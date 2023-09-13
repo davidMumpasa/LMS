@@ -2,12 +2,26 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Display User</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Signup</title>
+    <link rel="stylesheet" href="user.css"> <!-- Link to your CSS file -->
 </head>
 <body>
-    <h1>User Information</h1>
-    <p>Name: {{ name }}</p>
-    <p>Surname: {{ surname }}</p>
-    <p>Cell Phone Number: {{ cellNo }}</p>
+    <button id="open-popup-button" class="button">Sign Up</button>
+    <div id="signup-popup" class="popup">
+        <div class="popup-content">
+            <span class="close-button" id="close-popup-button">&times;</span>
+            <h1>Sign Up</h1>
+            <form>
+                <input type="text" placeholder="Username" required>
+                <input type="email" placeholder="Email" required>
+                <input type="password" placeholder="Password" required>
+                <input type="password" placeholder="Confirm Password" required>
+                <button class="button" type="submit">Sign Up</button>
+            </form>
+            <p>Already have an account? <a href="#">Log in here</a></p>
+        </div>
+    </div>
+    <script src="script.js"></script> <!-- Link to your JavaScript file -->
 </body>
 </html>

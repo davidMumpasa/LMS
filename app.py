@@ -1,9 +1,9 @@
+from base64 import b64encode
 from datetime import datetime
 import decimal
 import requests
 import mysql.connector
 from static.config import API_KEY
-import concurrent.futures
 from database import db
 import json
 from flask import Flask, request, jsonify, session
@@ -123,7 +123,7 @@ def update_users():
         cursor.close()
         connection.close()
 
-        return "Users stored successfully!"
+        return users_data
     except Exception as exception:
         print(f" {str(exception)}")
         raise exception
@@ -517,8 +517,9 @@ def store_certifications():
                 """
 
                 values = (
-                certification_id, course_name, download_url, expiration_date, expiration_date_timestamp, issued_date,
-                public_url, course_id)
+                    certification_id, course_name, download_url, expiration_date, expiration_date_timestamp,
+                    issued_date,
+                    public_url, course_id)
 
                 cursor.execute(insert_query, values)
                 connection.commit()
@@ -633,7 +634,7 @@ def store_group():
             """
 
             values = (
-            group_id, name, description, price, key_column, max_redemptions, redemptions_sofar, belongs_to_branch)
+                group_id, name, description, price, key_column, max_redemptions, redemptions_sofar, belongs_to_branch)
 
             cursor.execute(insert_query, values)
             connection.commit()
@@ -861,9 +862,11 @@ def store_serveys():
                         insert_query = """
                             INSERT INTO survey (
                                 id,
+                                createdAt,
+                                completedAt,
                                 course_id
                             )
-                            VALUES (%s,%s)
+                            VALUES (%s, %s, %s, %s)
                             ON DUPLICATE KEY UPDATE
                                 id = VALUES(id),
                                 course_id = VALUES(course_id)
@@ -902,226 +905,126 @@ def store_serveys():
         raise exception
 
 
-@app.route('/course/<int:course_id>', methods=['GET'])
-def get_course(course_id):
-    API_KEY = 'aRh1ck3Zc2LaGKAqHqBTecRTfZb9pH'
-    url = f'https://fluid.talentlms.com/api/v1/courses/id:{course_id}'
-    auth = requests.auth.HTTPBasicAuth(API_KEY, '')
+@app.route('/getQuizResults', methods=['GET'])
+def get_quiz_results():
+    # Create the initial database connection and cursor
+    connection = db.get_connection()
+    cursor = connection.cursor()
 
-    response = requests.get(url, auth=auth)
-    course_data = response.json()
+    # Define your xAPI endpoint and authentication
+    endpoint = "https://lmsvisualization.lrs.io/xapi/"
+    auth = "Basic " + b64encode("binnom:jojeba".encode()).decode()
 
-    inits = course_data['units']
-    users = course_data['users']
+    # Define the query parameters to filter statements by verbs (passed and failed)
+    passed_parameters = {
+        "verb": "http://adlnet.gov/expapi/verbs/passed"
+    }
 
-    session['inits'] = inits
-    session['users'] = users
+    failed_parameters = {
+        "verb": "http://adlnet.gov/expapi/verbs/failed"
+    }
 
-    return store_test_and_quiz(course_data)
+    # Send a GET request to retrieve xAPI statements with the "passed" verb
+    passed_response = requests.get(endpoint + "statements", params=passed_parameters, headers={"Authorization": auth})
 
+    # Send a GET request to retrieve xAPI statements with the "failed" verb
+    failed_response = requests.get(endpoint + "statements", params=failed_parameters, headers={"Authorization": auth})
 
-@app.route('/quizz', methods=['GET'])
-def store_test_and_quiz(course):
-    try:
-        course_id = course['id']
-        users = course['users']
-        units = course['units']
+    # ... (Previous code remains the same)
 
-        quiz_results = []
+    if passed_response.status_code == 200 and failed_response.status_code == 200:
+        # Requests were successful
+        passed_statements = passed_response.json()["statements"]
+        failed_statements = failed_response.json()["statements"]
 
-        connection = db.get_connection()  # Use the get_connection() function from your db module
-        cursor = connection.cursor()
+        all_statements = {
+            "passed_statements": passed_statements,
+            "failed_statements": failed_statements
+        }
 
-        for unit in units:
-            unit_name = unit['name']
-            unit_type = unit['type']
+        # Iterate through all statements (passed and failed)
+        for statement in all_statements['passed_statements'] + all_statements['failed_statements']:
+            actor = statement["actor"]
+            object_js = statement["object"]
+            definition = object_js["definition"]
 
-            if unit_type == "SCORM | xAPI | cmi5" and unit_name != "Survey":
-                quizz_id = unit['id']
+            # Check if "name" is present in the "definition" dictionary
+            if "name" in definition:
+                name = definition["name"]
+                # Check if "und" is present in the "name" dictionary
+                if "und" in name:
+                    # Remove "- Quiz" or "- Quizz" from the course name
+                    course_name = name["und"].replace(" - Quiz", "").replace(" - Quizz", "")
+                else:
+                    course_name = "Unknown"
+            else:
+                course_name = "Unknown"
 
-                for user in users:
-                    user_id = user['id']
-                    url = f'https://fluid.talentlms.com/api/v1/getusersprogressinunits/unit_id:{quizz_id},user_id:{user_id}'
-                    auth = requests.auth.HTTPBasicAuth(API_KEY, '')
+            user_name = actor["name"]
 
-                    response = requests.get(url, auth=auth)
-                    response.raise_for_status()
-                    quiz_data = response.json()
+            # Define the SQL query to retrieve user_id based on user_name
+            sql_query = "SELECT user_id FROM user WHERE first_name = %s"
+            sql_query2 = "SELECT id FROM course WHERE name = %s"
 
-                    score = quiz_data['score']
-                    status = quiz_data['status']
+            # Execute the SQL query
+            cursor.execute(sql_query, (user_name,))
+            # Fetch the result (user_id)
+            user_id = cursor.fetchone()
 
-                    # Insert quiz data into the appropriate table
-                    insert_quiz_query = """
-                        INSERT INTO quizz (
-                            quizz_id,
-                            quizz_name
-                        )
-                        VALUES (%s, %s)
-                        ON DUPLICATE KEY UPDATE
-                            quizz_id = VALUES(quizz_id),
-                            quizz_name = VALUES(quizz_name)
-                    """
-                    quiz_values = (quizz_id, unit_name)
+            # Fetch all results of the first query before executing the second query
+            cursor.fetchall()
 
-                    cursor.execute(insert_quiz_query, quiz_values)
-                    connection.commit()
+            cursor.execute(sql_query2, (course_name,))
+            # Fetch the result (course_id)
+            course_id = cursor.fetchone()
 
-                    # Insert quiz data into the appropriate table
-                    insert_quiz_query2 = """
-                        INSERT INTO quizz_has_user (
-                            quizz_id,
-                            user_id,
-                            score,
-                            status
-                        )
-                        VALUES (%s, %s, %s, %s)
-                        ON DUPLICATE KEY UPDATE
-                            quizz_id = VALUES(quizz_id),
-                            user_id = VALUES(user_id),
-                            score = VALUES(score),
-                            status = VALUES(status)
-                    """
-                    quiz_values2 = (quizz_id, user_id, score, status)
+            user_id = user_id[0] if user_id else None
+            course_id = course_id[0] if course_id else None
 
-                    cursor.execute(insert_quiz_query2, quiz_values2)
-                    connection.commit()
+            # Extract the stored value and verb from the JSON statement
+            timestamp_str = statement.get("timestamp")
 
-                    # Insert quiz data into the appropriate table
-                    insert_quiz_query3 = """
-                        INSERT INTO course (
-                            id,
-                            quizz_id
-                        )
-                        VALUES (%s,%s)
-                        ON DUPLICATE KEY UPDATE
-                            id = VALUES(id),
-                            quizz_id = VALUES(quizz_id)
-                    """
-                    quiz_values3 = (course_id, quizz_id,)
-                    cursor.execute(insert_quiz_query3, quiz_values3)
-                    connection.commit()
+            # Convert the timestamp string to a datetime object
+            createdAt = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+            verb = statement["verb"]["display"]["en-US"]
+            score = statement.get("result", {}).get("score", {}).get("raw")
+            total_max = statement.get("result", {}).get("score", {}).get("max")
 
-                    quiz_result = {
-                        "user_id": user_id,
-                        "unit_name": unit_name,
-                        "score": score,
-                        "status": status
-                    }
-                    quiz_results.append(quiz_result)
+            # Insert data into the quizz table
+            insert_quiz_query = """
+                INSERT INTO quizz (quizz_name, createdAt)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE createdAt = VALUES(createdAt)
+            """
+            quiz_values = (course_name, createdAt)
 
-        # Close the cursor and the connection
-        cursor.close()
-        connection.close()
+            cursor.execute(insert_quiz_query, quiz_values)
 
-        return json.dumps(quiz_results)
+            # Insert data into the quizz_has_user table, including quizz_id
+            insert_quiz_has_user_query = """
+                INSERT INTO quizz_has_user (quizz_name, user_id, score, status, total_max, course_id)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    user_id = VALUES(user_id),
+                    score = VALUES(score),
+                    status = VALUES(status),
+                    total_max = VALUES(total_max),
+                    course_id = VALUES(course_id)
+            """
 
-    except Exception as exception:
-        print(f" {str(exception)}")
-        raise exception
+            quiz_has_user_values = (course_name, user_id, score, verb, total_max, course_id)
 
-    return jsonify({"message": "Success"})
+            cursor.execute(insert_quiz_has_user_query, quiz_has_user_values)
 
+            # Commit changes to the database
+            connection.commit()
 
-@app.route('/quizzes', methods=['GET'])
-def store_quizzes():
-    try:
-        url1 = 'https://fluid.talentlms.com/api/v1/courses'
-
-        auth = requests.auth.HTTPBasicAuth(API_KEY, '')
-        response = requests.get(url1, auth=auth)
-        courses = response.json()
-        connection = db.get_connection()
-        cursor = connection.cursor()
-
-        quiz_results = []
-
-        for course_data in courses:
-            course_id = course_data['id']
-            url2 = f'https://fluid.talentlms.com/api/v1/courses/id:{course_id}'
-            auth = requests.auth.HTTPBasicAuth(API_KEY, '')
-            response = requests.get(url2, auth=auth)
-            course = response.json()
-
-            users = course['users']
-            units = course['units']
-
-            for unit in units:
-                unit_name = unit['name']
-                unit_type = unit['type']
-
-                if unit_type == "SCORM | xAPI | cmi5" and unit_name != "Survey":
-                    quizz_id = unit['id']
-
-                    for user in users:
-                        user_id = user['id']
-                        url = f'https://fluid.talentlms.com/api/v1/getusersprogressinunits/unit_id:{quizz_id},user_id:{user_id}'
-                        auth = requests.auth.HTTPBasicAuth(API_KEY, '')
-
-                        response = requests.get(url, auth=auth)
-                        response.raise_for_status()
-                        quiz_data = response.json()
-
-                        score = quiz_data['score']
-                        status = quiz_data['status']
-
-                        # Insert quiz data into the appropriate table
-                        insert_quiz_query = """
-                            INSERT INTO quizz (
-                                quizz_id,
-                                quizz_name,
-                                course_id
-                            )
-                            VALUES (%s, %s, %s)
-                            ON DUPLICATE KEY UPDATE
-                                quizz_id = VALUES(quizz_id),
-                                quizz_name = VALUES(quizz_name),
-                                course_id = VALUES(course_id)
-                        """
-                        quiz_values = (quizz_id, unit_name, course_id)
-
-                        cursor.execute(insert_quiz_query, quiz_values)
-                        connection.commit()
-
-                        # Insert quiz data into the appropriate table
-                        insert_quiz_query2 = """
-                            INSERT INTO quizz_has_user (
-                                quizz_id,
-                                user_id,
-                                score,
-                                status
-                            )
-                            VALUES (%s, %s, %s, %s)
-                            ON DUPLICATE KEY UPDATE
-                                quizz_id = VALUES(quizz_id),
-                                user_id = VALUES(user_id),
-                                score = VALUES(score),
-                                status = VALUES(status)
-                        """
-                        quiz_values2 = (quizz_id, user_id, score, status)
-
-                        cursor.execute(insert_quiz_query2, quiz_values2)
-                        connection.commit()
-
-                        quiz_result = {
-                            "user_id": user_id,
-                            "unit_name": unit_name,
-                            "score": score,
-                            "status": status
-                        }
-                        quiz_results.append(quiz_result)
-
-        # Close the cursor and the connection
-        cursor.close()
-        connection.close()
-
-        return json.dumps(quiz_results)
-
-    except Exception as exception:
-        print(f" {str(exception)}")
-        raise exception
-
-    return jsonify({"message": "Success"})
+        # Return both sets of users
+        return jsonify(all_statements)
+    else:
+        # Handle errors
+        return jsonify({"error": "Failed to retrieve quiz results"}), max(passed_response.status_code,
+                                                                          failed_response.status_code)
 
 
 @app.route('/tests/<int:course_id>', methods=['GET'])
